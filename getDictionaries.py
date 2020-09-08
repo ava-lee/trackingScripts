@@ -20,9 +20,11 @@ parser = argparse.ArgumentParser(description='Get dictionaries for analysing nTu
 parser.add_argument('-i', "--inDir", dest='inDir', default='/unix/atlasvhbb2/ava/FTAGFramework/athenaOutputs/',
                     help='input directory with merged nTuples from athena')
 parser.add_argument('-d', "--outDir", dest='outDir', default='./varDicts/', help='output directory to store pickles')
+parser.add_argument('-t', "--tracks", dest='tracks', default='', help='input track collections')
+parser.add_argument('-v', "--version", dest='version', default='427080_Zprime_V5', help='input sample versions')
 args = parser.parse_args()
 
-
+#nom:nom_replaceHFWithTruth:nom_replaceFRAGHFWithTruth:nom_replaceFRAGHFGEANTWithTruth:nom_replaceWithTruth:pseudo:ideal
 def selectJet(event, jet):
     jet_pt = event.jet_pt[jet]/1000
     jet_eta = abs(event.jet_eta[jet])
@@ -35,8 +37,9 @@ def selectJet(event, jet):
     return True
 
 def saveDictionaries(filepath, outDir, version, track, jetVars="", trackVars="", comment=""):
-    file = ROOT.TFile(str(filepath))
-    tree = file.Get("bTag_AntiKt4EMPFlowJets") #tree = file.Get("bTag_AntiKt4EMTopoJets")
+    file = ROOT.TFile(filepath)
+    #tree = file.Get("bTag_AntiKt4EMPFlowJets")
+    tree = file.Get("bTag_AntiKt4EMTopoJets")
 
     for event in tree: # equivalent to for i in tree.GetEntries() i.e. total events, tree.GetEntry(i) i.e. event
         # getattr(object, 'x') is completely equivalent to object.x.
@@ -82,12 +85,18 @@ def saveDictionaries(filepath, outDir, version, track, jetVars="", trackVars="",
 
 if __name__ == "__main__":
     if not (os.path.isdir(args.outDir)): os.makedirs(args.outDir)
+    processes = []  # multiprocessing
+
     files = glob.glob(args.inDir+'*/*/all_flav*.root')
-    processes = [] #multiprocessing
+    if args.tracks != "":
+        tracks = args.tracks.split(':')
+        files = []
+        for i in range (len(tracks)):
+            files.append(glob.glob(args.inDir + '*/'+ tracks[i] + '/all_flav*.root')[0])
 
     for i in range(len(files)):
-        track = files[i].split('_')[-1].replace('.root','')
-        version = files[i].split('.')[2] + '_' + files[i].split('.')[3].split('_')[-1]
+        track = tracks[i]
+        if args.tracks == "": track = files[i].split('_')[-1].replace('.root','')
 
         jetVars = {
             'jet_LabDr_HadF': [],  # to categorise jets
@@ -114,7 +123,7 @@ if __name__ == "__main__":
             'jet_dRiso': [], # to categorise tracks
         }
 
-        p = multiprocessing.Process(target=saveDictionaries, args=(files[i], args.outDir, version, track, jetVars, "", ))
+        p = multiprocessing.Process(target=saveDictionaries, args=(files[i], args.outDir, args.version, track, jetVars, "", ))
         processes.append(p)
         p.start()
 
