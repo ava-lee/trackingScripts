@@ -75,21 +75,21 @@ def saveDictionaries(files, outDir, version, track, pTbins):
                 for binName, binCuts in pTbins.items():
                     pTDict = allpTJetDict[binName]
                     if len(binCuts) > 1:
-                        if jet_pt > binCuts[0]:
-                            if jet_pt < binCuts[1]:
+                        if jet_pt >= binCuts[0]:
+                            if jet_pt <= binCuts[1]:
                                 getJets(pTDict, event, jet)
                                 if not selectJet(event, jet):
                                     continue
                                 getVarValues(pTDict, tree, jet)
                     if len(binCuts) == 1:
                         if 'le' in binName:
-                            if jet_pt > binCuts[0]:
+                            if jet_pt < binCuts[0]:
                                 getJets(pTDict, event, jet)
                                 if not selectJet(event, jet):
                                     continue
                                 getVarValues(pTDict, tree, jet)
                         if 'ge' in binName:
-                            if jet_pt < binCuts[0]:
+                            if jet_pt > binCuts[0]:
                                 getJets(pTDict, event, jet)
                                 if not selectJet(event, jet):
                                     continue
@@ -127,8 +127,8 @@ if __name__ == "__main__":
     fileDict = {}
     pTbins = {
         'le_250': [250],
-        '250_400': [250, 400],
-        '400_1000': [400, 1000],
+        #'250_400': [250, 400],
+        #'400_1000': [400, 1000],
         'ge_1000': [1000],
     }
 
