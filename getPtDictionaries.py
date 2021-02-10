@@ -75,21 +75,21 @@ def saveDictionaries(files, outDir, version, track, pTbins):
                 for binName, binCuts in pTbins.items():
                     pTDict = allpTJetDict[binName]
                     if len(binCuts) > 1:
-                        if jet_pt >= binCuts[0]:
-                            if jet_pt <= binCuts[1]:
+                        if jet_pt > binCuts[0]:
+                            if jet_pt < binCuts[1]:
                                 getJets(pTDict, event, jet)
                                 if not selectJet(event, jet):
                                     continue
                                 getVarValues(pTDict, tree, jet)
                     if len(binCuts) == 1:
                         if 'le' in binName:
-                            if jet_pt < binCuts[0]:
+                            if jet_pt <= binCuts[0]:
                                 getJets(pTDict, event, jet)
                                 if not selectJet(event, jet):
                                     continue
                                 getVarValues(pTDict, tree, jet)
                         if 'ge' in binName:
-                            if jet_pt > binCuts[0]:
+                            if jet_pt >= binCuts[0]:
                                 getJets(pTDict, event, jet)
                                 if not selectJet(event, jet):
                                     continue
@@ -111,6 +111,11 @@ def variables():
         'b': 0,
         'c': 0,
         'l': 0,
+        'jet_jf_sig3d': [],
+        'jet_jf_nvtx': [],
+        'jet_jf_ntrkAtVx': [],
+        'jet_jf_nvtx1t': [],
+
     }
 
     return jetVars
@@ -125,11 +130,20 @@ if __name__ == "__main__":
 
     tracks = args.tracks.split(':')
     fileDict = {}
-    pTbins = {
+
+    pTRFbins = {
         'le_250': [250],
-        #'250_400': [250, 400],
-        #'400_1000': [400, 1000],
+        '250_400': [250, 400],
+        '400_1000': [400, 1000],
         'ge_1000': [1000],
+    }
+
+    pTbins = {
+        'le_150': [150],
+        '150_400': [150, 400],
+        '400_1000': [400, 1000],
+        '1000_1750': [1000, 1750],
+        # 'ge_1750': [1000],
     }
 
     for track in tracks:
@@ -137,7 +151,7 @@ if __name__ == "__main__":
         print fileDict[track]
 
         p = multiprocessing.Process(target=saveDictionaries, args=(fileDict[track], args.outDir, args.version, track,
-                                                                   pTbins))
+                                                                   pTRFbins))
         processes.append(p)
         p.start()
 
