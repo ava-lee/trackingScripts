@@ -14,8 +14,7 @@ import os
 
 debug = True
 tree_name = 'bTag_AntiKt4EMPFlowJets'#'bTag_AntiKt4EMTopoJets'
-baseline_jet_cuts = 'jet_pt>20e3 & abs(jet_eta)<2.5 & (abs(jet_eta)>2.4 |\
-                     jet_pt>60e3 | jet_JVT>0.5) & (jet_aliveAfterOR ==True)' # Set JVT to 0.5 to match training-dataset-dumper and recommendations https://twiki.cern.ch/twiki/bin/viewauth/AtlasProtected/PileupJetRecommendation
+
 
 def GetArgs():
 
@@ -79,33 +78,43 @@ def FindCheck(jetVec):
     jet_feature_check[default_location] = 1
     return jet_feature_check
 
-def GetTree(file_name, add_cuts, write_tracks = False):
+def get_file_suffix(filename):
+    # Get a meaningful suffix for output filename from input filename
+    return '/'.join(filename.split('/')[-2:]).replace('.root','').replace('flav_Akt4EMPf','').replace('trk_','').strip('/').split('._')[-1]
+
+def flatten(nested):
+    # Flatten a nested array to one lower dimension
+    return list(itertools.chain.from_iterable(nested))
+
+def GetTree(file_name, add_cuts="", write_tracks=False):
     """Retrieves the events in the TTree with uproot and returns them as
     a pandas DataFrame."""
     if debug:
         t0_jets = dt.datetime.now()
         print('Start GetTree')
     var_list = list(mapping.keys())
-    if write_tracks:
-        track_var_list = list(track_mapping.keys())+['jet_phi_orig']
-        track_var_list.remove('jet_trk_ip2d_grade') # Not currently in FTAG framework ntuples
-        var_list += track_var_list
     tree = up.open(file_name)[tree_name]
+
+    if write_tracks:
+        tracks_ndarray = GetTracks(tree)
+    if debug:
+        print('Getting tracks ndarray took a total of: {}'.format(dt.datetime.now()-t0_jets))
+        t0_jets = dt.datetime.now()
+
     df = tree.pandas.df(var_list)
     if debug:
         print('Getting df with uproot took: {}'.format(dt.datetime.now()-t0_jets))
         t0_jets = dt.datetime.now()
 
-    # Get max bH pt of each event i.e. max of list in each row
     df['jet_bH_pt'] = df.apply(lambda row: max(row['jet_bH_pt'])[0], axis=1)
     df['jet_bH_pt'] = df['jet_bH_pt'].mask(df['jet_bH_pt'].lt(0), 0)  # Set all negative bH pt values to 0
-    # Add jet pT rank
-    df['jetPtRank'] = df.groupby(level=0)['jet_pt'].rank(ascending=False)
+    df['jetPtRank'] = df.groupby(level=0)['jet_pt'].rank(ascending=False) # Add jet pT rank
     # If jet_jf_dR is larger than 15, it was set to the "default" value of std::hypot(-11,-11), so set this to its actual default of -1
     df['jet_jf_dR'] = df['jet_jf_dR'].mask(df['jet_jf_dR'].gt(15), default_values2['jf_dR'][0])
 
     # Apply jet quality cuts
-    df.query(baseline_jet_cuts, inplace=True)
+    df.query('jet_pt>20e3 & abs(jet_eta)<2.5 & (abs(jet_eta)>2.4 |\
+                jet_pt>60e3 | jet_JVT>0.5) & (jet_aliveAfterOR ==True)', inplace=True)
 
     if add_cuts != "":
         df.query(add_cuts, inplace=True)
@@ -113,15 +122,8 @@ def GetTree(file_name, add_cuts, write_tracks = False):
     if debug:
         print('Querying jets df took: {}'.format(dt.datetime.now()-t0_jets))
         t0_jets = dt.datetime.now()
-    if write_tracks:
-        tracks_ndarray = GetTracks(df)
-        df.drop(columns=track_var_list, inplace=True) # Drop track columns not needed for jet df
-    if debug:
-        print('Getting tracks ndarray took a total of: {}'.format(dt.datetime.now()-t0_jets))
-        t0_jets = dt.datetime.now()
 
     df.rename(index=str, columns=mapping, inplace=True)
-
     # changing eta to absolute eta
     df['absEta_btagJes'] = df['eta_btagJes'].abs()
     # Replacing default values with this synthax
@@ -180,39 +182,42 @@ def getdR(jeta, jphi, teta, tphi):
     
     return tdrs
 
-def GetTracks(df):
-    """Retrieves track information from pandas DataFrame
-    obtained from events in TTree with uproot and returns
-    them as a numpy ndarray."""
+def GetTracks(tree):
+    """Retrieves track information from tree loaded from uproot."""
     
     if debug:
         t0 = dt.datetime.now()
 
-    # Don't want to modify the jets df here
-    df = df.copy(deep=True)
-    if debug:
-        print('\tDeep copy took: {}'.format(dt.datetime.now()-t0))
-        t0 = dt.datetime.now()
+    track_var_list = list(track_mapping.keys())
+    track_var_list.remove('jet_trk_ip2d_grade')
+    array = tree.arrays(track_var_list)
 
-    df = df.filter(list(track_mapping.keys()) + ['jet_phi_orig', 'jet_eta_orig', 'jet_pt_orig'], axis=1)
-    # Get track quantities per jet; currently stored as [[trks of jet1] ,..., [trks of jet_n]] repeated for each jet
-    for col_name in track_mapping.keys():
-        if col_name == 'jet_trk_ip2d_grade':
-            continue
-        # Removes duplicates and get corresponding list of track info for each jet (subentry)
-        df[col_name] = df.apply(lambda row: row[col_name][row.name[1]], axis=1)
+    ### Get indices to associate tracks to jets and apply baseline cuts
+    jet_select_var = ['jet_pt', 'jet_eta', 'jet_JVT', 'jet_aliveAfterOR', 'jet_phi_orig', 'jet_eta_orig', 'jet_pt_orig',
+                      'jet_btag_ntrk']
+    jet_df = tree.pandas.df(jet_select_var)
+    level0 = jet_df.index.get_level_values(0).astype(str)
+    level1 = jet_df.index.get_level_values(1).map("{:02}".format).values.astype(
+        str)  # Ensure 2 digits for  unique indices
+    jet_df['eventJetIndex'] = (level0 + "." + level1).astype(float)
+    jet_df = jet_df.reset_index(drop=True)
 
-    level0 = df.index.get_level_values(0).astype(str)
-    level1 = df.index.get_level_values(1).astype(str)
-    df['eventJetIndex'] = (level0 + "." + level1).astype(float)
+    jet_df.query('jet_pt>20e3 & abs(jet_eta)<2.5 & (abs(jet_eta)>2.4 |\
+                 jet_pt>60e3 | jet_JVT>0.5) & (jet_aliveAfterOR ==True)', inplace=True)
+    pass_baseline = jet_df.index.astype(int)
+    jet_var = ['jet_phi_orig', 'jet_eta_orig', 'jet_pt_orig', 'eventJetIndex']
 
+    # Flatten nested list 3D -> 2D and apply baseline cuts
+    tmp_dict = collections.OrderedDict()
+    for trk_var in track_var_list:
+        tmp_dict[trk_var] = np.array(flatten(array[trk_var.encode()]))[pass_baseline]
+
+    # Flatten to 1D and repeat values
     track_dict = collections.OrderedDict()
-    for var in ['eventJetIndex', 'jet_phi_orig', 'jet_eta_orig', 'jet_pt_orig']:
-        track_dict[var] = np.repeat(df[var].values, df['jet_trk_nsplitPixHits'].str.len())
-    for track_var in list(track_mapping.keys()):
-        if track_var == "jet_trk_ip2d_grade":
-            continue
-        track_dict[track_var] = list(itertools.chain.from_iterable(df[track_var]))
+    for var in jet_var:
+        track_dict[var] = np.repeat(jet_df[var].values, jet_df['jet_btag_ntrk'].values)
+    for trk_var in track_var_list:
+        track_dict[trk_var] = flatten(tmp_dict[trk_var])
     df = pd.DataFrame.from_dict(track_dict)
     if debug:
         print('\tUnrolling tracks took: {}'.format(dt.datetime.now() - t0))
@@ -347,17 +352,15 @@ def __run():
                                                   '='*int(20*j), 100*j))
         sys.stdout.flush()
 
-        nevts = up.numentries(file, tree_name)
         if args.write_tracks:
             df, tracks_ndarray = GetTree(file, add_cuts, args.write_tracks)
         else:
             df = GetTree(file, add_cuts)
 
         if args.single is False:
-            if len(args.input_files) == 1:
-                outfile_name = '{}/{}_{}-{}.h5'.format(args.output, sample_type, args.track_type, i)
-            else:
-                outfile_name = '{}/{}_{}-{}.h5'.format(args.output,sample_type,args.track_type,i)
+            suffix = get_file_suffix(file)
+            outfile_name = '{}/{}_{}-{}.h5'.format(args.output, sample_type, args.track_type, suffix)
+            print('Saving to output file: {}'.format(outfile_name))
             h5f = h5py.File(outfile_name, 'w')
             h5f.create_dataset('jets',
                             data=df.to_records(index=False)[:],compression='gzip')
@@ -373,7 +376,9 @@ def __run():
         events += len(df)
     print("")
     if args.single:
-        h5f = h5py.File(args.output, 'w')
+        outfile_name = '{}/{}_{}-merged.h5'.format(args.output, sample_type, args.track_type)
+        print('Saving to output file: {}'.format(outfile_name))
+        h5f = h5py.File(outfile_name, 'w')
         h5f.create_dataset('jets', data=df_out.sample(frac=1).to_records(
             index=False)[:int(events)],compression='gzip')
         h5f.close()
@@ -381,23 +386,3 @@ def __run():
     print('Conversion successful!')
 
 __run()
-"""
-if __name__ == "__main__":
-    args = GetArgs()
-    input_files = args.input_files
-    __run(input_files)
-    
-    processes = []  # multiprocessing
-
-    for i in range (0, 5): # separate into processing
-        glob.glob(input_dir + 'EXT0._0001[0-9][0-9].AOD.root')
-
-        p = multiprocessing.Process(target=saveDictionaries,
-                                    args=(files[i], args.outDir, args.version, track, jetVars, "", ""))
-        processes.append(p)
-        p.start()
-
-    for process in processes:
-        process.join()
-        
-    """
